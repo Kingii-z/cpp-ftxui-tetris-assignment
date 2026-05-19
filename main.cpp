@@ -1,177 +1,212 @@
+#include <thread>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/screen.hpp>
-#include <ftxui/component/component.hpp>
-#include <ftxui/component/event.hpp>
+#include <ftxui/component/screen_interactive.hpp>
+
 #include <vector>
 #include <random>
+#include <string>
+#include <chrono>
+#include <windows.h>
 
 using namespace ftxui;
 
-const int WIDTH = 10;
-const int HEIGHT = 20;
+const int GAME_WIDTH  = 10;
+const int GAME_HEIGHT = 20;
 
-std::vector<std::vector<int>> shapes = {
-	{{1,1,1,1}},
-	{{1,1},{1,1}},
-	{{0,1,1},{1,1,0}},
-	{{1,1,0},{0,1,1}},
-	{{1,1,1},{0,1,0}},
-	{{1,0,0},{1,1,1}},
-	{{0,0,1},{1,1,1}}
-};
-
-struct Block {
-	std::vector<std::vector<int>> shape;
-	int x, y;
-};
-
-Block current;
-int board[HEIGHT][WIDTH] = {0};
+int gameBoard[GAME_HEIGHT][GAME_WIDTH] = {0};
 int score = 0;
-bool gameOver = false;
+bool gameRunning = true;
 
-std::mt19937 rng{std::random_device{}()};
+using BlockShape = std::vector<std::vector<int>>;
+const std::vector<BlockShape> TETRIS_SHAPES = {
+    {{1,1,1,1}},
+    {{1,1},{1,1}},
+    {{0,1,1},{1,1,0}},
+    {{1,1,0},{0,1,1}},
+    {{1,1,1},{0,1,0}},
+    {{1,0,0},{1,1,1}},
+    {{0,0,1},{1,1,1}}
+};
 
-void newBlock() {
-	std::uniform_int_distribution<int> dist(0, shapes.size()-1);
-	current.shape = shapes[dist(rng)];
-	current.x = WIDTH/2 - (int)current.shape[0].size()/2;
-	current.y = 0;
-	for(int i=0;i<current.shape.size();i++){
-		for(int j=0;j<current.shape[i].size();j++){
-			if(current.shape[i][j] && board[current.y+i][current.x+j]){
-				gameOver = true;
-			}
-		}
-	}
+struct ActiveBlock {
+    BlockShape shape;
+    int x;
+    int y;
+};
+ActiveBlock currentBlock;
+
+std::mt19937 randomEngine(std::random_device{}());
+
+// 碰撞检测
+bool checkCollision(int offsetX, int offsetY, const BlockShape& shape)
+{
+    for (int i = 0; i < shape.size(); i++)
+    {
+        for (int j = 0; j < shape[i].size(); j++)
+        {
+            if (shape[i][j] == 0) continue;
+            int newX = currentBlock.x + j + offsetX;
+            int newY = currentBlock.y + i + offsetY;
+
+            if (newX < 0 || newX >= GAME_WIDTH)  return true;
+            if (newY >= GAME_HEIGHT)              return true;
+            if (newY >= 0 && gameBoard[newY][newX] == 1) return true;
+        }
+    }
+    return false;
 }
 
-bool checkCollision(int dx, int dy, std::vector<std::vector<int>>& s) {
-	for(int i=0;i<s.size();i++){
-		for(int j=0;j<s[i].size();j++){
-			if(s[i][j]){
-				int nx = current.x + j + dx;
-				int ny = current.y + i + dy;
-				if(nx<0 || nx>=WIDTH || ny>=HEIGHT) return true;
-				if(ny>=0 && board[ny][nx]) return true;
-			}
-		}
-	}
-	return false;
+// 方块旋转
+BlockShape rotateShape(const BlockShape& s)
+{
+    int rows = s.size();
+    int cols = s[0].size();
+    BlockShape res(cols, std::vector<int>(rows));
+    for(int i=0;i<rows;i++)
+        for(int j=0;j<cols;j++)
+            res[j][rows-1 - i] = s[i][j];
+    return res;
 }
 
-void merge() {
-	for(int i=0;i<current.shape.size();i++){
-		for(int j=0;j<current.shape[i].size();j++){
-			if(current.shape[i][j]){
-				board[current.y+i][current.x+j] = 1;
-			}
-		}
-	}
+// 落地锁定+消行
+void lockBlockAndClearLine()
+{
+    for (int i = 0; i < currentBlock.shape.size(); i++)
+    {
+        for (int j = 0; j < currentBlock.shape[i].size(); j++)
+        {
+            if (currentBlock.shape[i][j])
+                gameBoard[currentBlock.y + i][currentBlock.x + j] = 1;
+        }
+    }
+
+    for (int row = GAME_HEIGHT - 1; row >= 0; row--)
+    {
+        bool full = true;
+        for (int col = 0; col < GAME_WIDTH; col++)
+            if (!gameBoard[row][col]) { full = false; break; }
+
+        if (full)
+        {
+            score += 150;
+            for (int k = row; k > 0; k--)
+                memcpy(gameBoard[k], gameBoard[k-1], sizeof(gameBoard[k]));
+            row++;
+        }
+    }
+
+    int id = std::uniform_int_distribution<int>(0,6)(randomEngine);
+    currentBlock.shape = TETRIS_SHAPES[id];
+    currentBlock.x = GAME_WIDTH / 2 - (int)currentBlock.shape[0].size() / 2;
+    currentBlock.y = 0;
+
+    if(checkCollision(0,0,currentBlock.shape)) gameRunning = false;
 }
 
-void clearLines() {
-	int lines = 0;
-	for(int i=HEIGHT-1;i>=0;i--){
-		bool full = true;
-		for(int j=0;j<WIDTH;j++) if(!board[i][j]) full=false;
-		if(full){
-			lines++;
-			for(int k=i;k>0;k--){
-				for(int j=0;j<WIDTH;j++) board[k][j]=board[k-1][j];
-			}
-			for(int j=0;j<WIDTH;j++) board[0][j]=0;
-			i++;
-		}
-	}
-	score += lines*100;
+// 键盘监听
+void keyboardLoop()
+{
+    while (gameRunning)
+    {
+        Sleep(50);
+        if(GetAsyncKeyState(VK_LEFT) && !checkCollision(-1,0,currentBlock.shape))
+        { currentBlock.x--; Sleep(120); }
+
+        if(GetAsyncKeyState(VK_RIGHT) && !checkCollision(1,0,currentBlock.shape))
+        { currentBlock.x++; Sleep(120); }
+
+        if(GetAsyncKeyState(VK_DOWN) && !checkCollision(0,1,currentBlock.shape))
+        { currentBlock.y++; Sleep(120); }
+
+        // 新增：上键旋转
+        if(GetAsyncKeyState(VK_UP))
+        {
+            BlockShape rotated = rotateShape(currentBlock.shape);
+            if(!checkCollision(0,0,rotated))
+                currentBlock.shape = rotated;
+            Sleep(180);
+        }
+
+        if(GetAsyncKeyState(VK_SPACE))
+        {
+            while(!checkCollision(0,1,currentBlock.shape))
+                currentBlock.y++;
+            lockBlockAndClearLine();
+            Sleep(200);
+        }
+    }
 }
 
-std::vector<std::vector<int>> rotate(std::vector<std::vector<int>> s) {
-	std::vector<std::vector<int>> res(s[0].size(), std::vector<int>(s.size()));
-	for(int i=0;i<s.size();i++){
-		for(int j=0;j<s[i].size();j++){
-			res[j][s.size()-1-i] = s[i][j];
-		}
-	}
-	return res;
-}
+int main()
+{
+    int startId = std::uniform_int_distribution<int>(0,6)(randomEngine);
+    currentBlock.shape = TETRIS_SHAPES[startId];
+    currentBlock.x = GAME_WIDTH / 2 - 2;
+    currentBlock.y = 0;
 
-int main() {
-	newBlock();
-	
-	auto gameComponent = Renderer([&]{
-		Element game;
-		std::vector<Element> rows;
-		
-		int temp[HEIGHT][WIDTH];
-		memcpy(temp, board, sizeof(board));
-		if(!gameOver){
-			for(int i=0;i<current.shape.size();i++){
-				for(int j=0;j<current.shape[i].size();j++){
-					if(current.shape[i][j]){
-						int ty = current.y+i;
-						int tx = current.x+j;
-						if(ty>=0 && ty<HEIGHT && tx>=0 && tx<WIDTH){
-							temp[ty][tx] = 2;
-						}
-					}
-				}
-			}
-		}
-		
-		for(int i=0;i<HEIGHT;i++){
-			std::vector<Element> row;
-			for(int j=0;j<WIDTH;j++){
-				if(temp[i][j]==0) row.push_back(text("  ") | bgcolor(Color::Black));
-				if(temp[i][j]==1) row.push_back(text("  ") | bgcolor(Color::Blue));
-				if(temp[i][j]==2) row.push_back(text("  ") | bgcolor(Color::Green));
-			}
-			rows.push_back(hbox(std::move(row)));
-		}
-		
-		Element mainBoard = vbox(std::move(rows)) | border;
-		
-		Element info = vbox({
-			text("俄罗斯方块") | bold | center,
-			separator(),
-			text("分数: " + std::to_string(score)),
-			separator(),
-			text("操作说明:"),
-			text("← → 左右移动"),
-			text("↑ 旋转方块"),
-			text("↓ 加速下落"),
-			gameOver ? text("游戏结束!") | color(Color::Red) : text("游戏进行中"),
-		}) | border;
-		
-		return hbox(mainBoard, filler(), info);
-	});
-	
-	gameComponent |= EventHandler([&](Event e){
-		if(gameOver) return false;
-		if(e == Event::ArrowLeft && !checkCollision(-1,0,current.shape)) current.x--;
-		if(e == Event::ArrowRight && !checkCollision(1,0,current.shape)) current.x++;
-		if(e == Event::ArrowDown && !checkCollision(0,1,current.shape)) current.y++;
-		if(e == Event::ArrowUp){
-			auto rotated = rotate(current.shape);
-			if(!checkCollision(0,0,rotated)) current.shape = rotated;
-		}
-		return true;
-	});
-	while(true){
-		auto screen = Screen::Create(Dimension::Full(), Dimension::Full());
-		Render(screen, gameComponent->Render());
-		screen.Print();
-		if(!gameOver){
-			if(!checkCollision(0,1,current.shape)){
-				current.y++;
-			}else{
-				merge();
-				clearLines();
-				newBlock();
-			}
-		}
-		usleep(350000);
-	}
-	return 0;
-}
+    // 官方稳定交互屏幕，彻底解决重影
+     auto screen = ScreenInteractive::TerminalOutput();
+     std::thread inputThread(keyboardLoop);
+     inputThread.detach();
+     auto lastFall = std::chrono::steady_clock::now();
+     const std::chrono::milliseconds fallTime(550);
+     while(gameRunning)
+     {
+         auto now = std::chrono::steady_clock::now();
+         auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFall);
+         if(delta >= fallTime)
+         {
+             if(!checkCollision(0,1,currentBlock.shape))
+                 currentBlock.y++;
+             else
+                 lockBlockAndClearLine();
+             lastFall = now;
+         }
+         Elements rows;
+         for(int i=0;i<GAME_HEIGHT;i++)
+         {
+             Elements cells;
+             for(int j=0;j<GAME_WIDTH;j++)
+             {
+                 bool fill = gameBoard[i][j];
+                 if(i >= currentBlock.y && i < currentBlock.y + (int)currentBlock.shape.size())
+                 {
+                     int offY = i - currentBlock.y;
+                     if(j >= currentBlock.x && j < currentBlock.x + (int)currentBlock.shape[offY].size())
+                         if(currentBlock.shape[offY][j - currentBlock.x]) fill = true;
+                 }
+                 if(fill)
+                     cells.push_back(text("■ ") | bgcolor(Color::Cyan) | color(Color::White));
+                 else
+                     cells.push_back(text("  "));
+             }
+             rows.push_back(hbox(std::move(cells)));
+         }
+         Element ui = hbox({
+             vbox(std::move(rows)) | border,
+             separator(),
+             vbox({
+                 text("俄罗斯方块") | bold | center,
+                 text("得分: " + std::to_string(score)) | center,
+                 separator(),
+                 text("↑ 旋转"),
+                 text("← → 移动"),
+                 text("↓ 加速下落"),
+                 text("空格 一键落底")
+             }) | border | size(WIDTH, EQUAL, 16)
+         }) | center;
+         // 稳定渲染 无残影
+         Render(screen, ui);
+         screen.Print();
+         screen.Clear();
+         Sleep(40);
+     }
+     Render(screen, vbox({
+         text("游戏结束") | bold | center,
+         text("最终得分: " + std::to_string(score)) | center
+     }) | border | center);
+     screen.Print();
+     inputThread.join();
+     return 0;
+ }
