@@ -21,11 +21,13 @@ C++大作业，AI+FTXUI实现终端俄罗斯方块
 2. 在项目根目录下载 FTXUI 官方库，放在同级FTXUI文件夹
 3. 编译运行：
 cmake -S . -B build -G "MinGW Makefiles"
+
 cmake --build build
+
 ./tetris.exe
 
 ## 五、游戏操作
-← → 方块左右移动
-↑ 方块顺时针旋转
-↓ 加速下落
-空格 一键落底
+1. ← → 方块左右移动
+2.↑ 方块顺时针旋转
+3.↓ 加速下落
+4.空格 一键落底
