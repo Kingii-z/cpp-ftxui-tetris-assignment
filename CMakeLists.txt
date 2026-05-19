@@ -1,20 +1,21 @@
-cmake_minimum_required(VERSION 3.15)
-project(ftxui_tetris_homework)
+cmake_minimum_required(VERSION 3.16)
+project(tetris_game)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include(FetchContent)
-FetchContent_Declare(
-  ftxui
-  GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
-  GIT_TAG v5.0.0
-)
-FetchContent_MakeAvailable(ftxui)
+
+set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(FTXUI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(FTXUI_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(FTXUI)
 
 add_executable(tetris main.cpp)
-target_link_libraries(tetris
-  PRIVATE ftxui::screen
-  PRIVATE ftxui::dom
-  PRIVATE ftxui::component
-)
+
+
+target_link_libraries(tetris PRIVATE ftxui::component ftxui::dom ftxui::screen)
+
+if(WIN32)
+    target_link_libraries(tetris PRIVATE user32)
+endif()
